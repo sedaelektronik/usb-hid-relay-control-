@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>USB HID Relay Control</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .status {
+            margin: 15px 0;
+            padding: 10px;
+            border-radius: 4px;
+            text-align: center;
+        }
+        .connected { background-color: #d4edda; color: #155724; }
+        .disconnected { background-color: #f8d7da; color: #721c24; }
+        button {
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            margin: 5px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        button:disabled { background-color: #cccccc; cursor: not-allowed; }
+        .relay-btn { width: 100px; }
+        .relay-on { background-color: #f44336; }
+        .relay-off { background-color: #4CAF50; }
+        textarea {
+            width: 100%;
+            height: 100px;
+            margin: 10px 0;
+        }
+        .connect-btn { background-color: #2196F3; }
+        .disconnect-btn { background-color: #ff9800; }
+        .command-btn { background-color: #9c27b0; }
+        .all-btn { background-color: #607d8b; }
+        h2 { color: #333; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>USB HID Relay Control Interface</h1>
+        
+        <div id="deviceStatus" class="status disconnected">
+            Device not connected
+        </div>
+        
+        <div>
+            <button id="connectBtn" class="connect-btn">Connect to Device</button>
+            <button id="disconnectBtn" class="disconnect-btn" disabled>Disconnect Device</button>
+        </div>
+        
+        <hr>
+        
+        <h2>Relay Control Buttons</h2>
+        <div id="relayButtons">
+            <!-- Buttons will be added by JavaScript -->
+        </div>
+        
+        <hr>
+        
+        <h2>Batch Operations</h2>
+        <div>
+            <button id="allOnBtn" class="all-btn">Turn On All Relays</button>
+            <button id="allOffBtn" class="all-btn">Turn Off All Relays</button>
+        </div>
+        
+        <hr>
+        
+        <h3>Log:</h3>
+        <textarea id="logArea" readonly></textarea>
+    </div>
+
+    <script>
+        let device;
+        let isConnected = false;
+        
+        // Relay control values
+        const RELAY_ON_VALUES = [1, 2, 3, 4, 5, 6, 7, 8];    // On values
+        const RELAY_OFF_VALUES = [17, 18, 19, 20, 21, 22, 23, 24]; // Off values
+        
+        // HTML elements
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const deviceStatus = document.getElementById('deviceStatus');
+        const logArea = document.getElementById('logArea');
+        const relayButtons = document.getElementById('relayButtons');
+        const allOnBtn = document.getElementById('allOnBtn');
+        const allOffBtn = document.getElementById('allOffBtn');
+        
+        // Add log message
+        function addLog(message) {
+            logArea.value += new Date().toLocaleTimeString() + ': ' + message + '\n';
+            logArea.scrollTop = logArea.scrollHeight;
+        }
+        
+        // Connect to device
+        async function connectToDevice() {
+            try {
+                if (!navigator.hid) {
+                    throw new Error('Your browser does not support WebHID API');
+                }
+                
+                addLog('Waiting for device selection...');
+                
+                const devices = await navigator.hid.requestDevice({
+                    filters: [] // Show all HID devices
+                });
+                
+                if (devices.length === 0) {
+                    addLog('No device selected');
+                    return;
+                }
+                
+                device = devices[0];
+                addLog(`Selected device: ${device.productName || 'Unknown'}`);
+                
+                if (!device.opened) {
+                    await device.open();
+                    addLog('Device connection opened');
+                }
+                
+                isConnected = true;
+                updateUI();
+                deviceStatus.textContent = `Connected: ${device.productName || 'Unknown Device'}`;
+                deviceStatus.className = 'status connected';
+                
+                device.addEventListener('disconnect', () => {
+                    addLog('Device disconnected');
+                    isConnected = false;
+                    updateUI();
+                    deviceStatus.textContent = 'Device not connected';
+                    deviceStatus.className = 'status disconnected';
+                });
+                
+            } catch (error) {
+                addLog('Error: ' + error.message);
+                console.error(error);
+            }
+        }
+        
+        // Disconnect from device
+        async function disconnectFromDevice() {
+            if (device) {
+                try {
+                    await device.close();
+                    addLog('Device connection closed');
+                    isConnected = false;
+                    updateUI();
+                    deviceStatus.textContent = 'Device not connected';
+                    deviceStatus.className = 'status disconnected';
+                } catch (error) {
+                    addLog('Error: ' + error.message);
+                    console.error(error);
+                }
+            }
+        }
+        
+        // Send data to device (8-byte buffer)
+        async function sendRelayCommand(value) {
+            if (!isConnected || !device) {
+                addLog('Error: Device not connected');
+                return;
+            }
+            
+            try {
+                const data = new Uint8Array([0, 0, 0, value, 0, 0, 0, 0]);
+                await device.sendReport(0, data);
+                addLog(`Command sent: ${value} (${Array.from(data).join(', ')})`);
+                return true;
+            } catch (error) {
+                addLog('Send error: ' + error.message);
+                console.error(error);
+                return false;
+            }
+        }
+        
+        // Create relay buttons
+        function createRelayButtons() {
+            relayButtons.innerHTML = '';
+            
+            for (let i = 0; i < 8; i++) {
+                const btn = document.createElement('button');
+                btn.className = 'relay-btn relay-off';
+                btn.textContent = `Relay ${i+1} (Off)`;
+                btn.dataset.relayNum = i;
+                btn.dataset.state = 'off';
+                
+                btn.addEventListener('click', async () => {
+                    const relayNum = parseInt(btn.dataset.relayNum);
+                    const isOn = btn.dataset.state === 'on';
+                    
+                    if (isOn) {
+                        const success = await sendRelayCommand(RELAY_OFF_VALUES[relayNum]);
+                        if (success) {
+                            btn.textContent = `Relay ${relayNum+1} (Off)`;
+                            btn.className = 'relay-btn relay-off';
+                            btn.dataset.state = 'off';
+                        }
+                    } else {
+                        const success = await sendRelayCommand(RELAY_ON_VALUES[relayNum]);
+                        if (success) {
+                            btn.textContent = `Relay ${relayNum+1} (On)`;
+                            btn.className = 'relay-btn relay-on';
+                            btn.dataset.state = 'on';
+                        }
+                    }
+                });
+                
+                relayButtons.appendChild(btn);
+            }
+        }
+        
+        // Update UI status
+        function updateUI() {
+            connectBtn.disabled = isConnected;
+            disconnectBtn.disabled = !isConnected;
+            allOnBtn.disabled = !isConnected;
+            allOffBtn.disabled = !isConnected;
+        }
+        
+        // Event listeners
+        connectBtn.addEventListener('click', connectToDevice);
+        disconnectBtn.addEventListener('click', disconnectFromDevice);
+        
+        // Turn on all relays
+        allOnBtn.addEventListener('click', async () => {
+            for (let i = 0; i < 8; i++) {
+                await sendRelayCommand(RELAY_ON_VALUES[i]);
+                const btn = document.querySelector(`button[data-relay-num="${i}"]`);
+                if (btn) {
+                    btn.textContent = `Relay ${i+1} (On)`;
+                    btn.className = 'relay-btn relay-on';
+                    btn.dataset.state = 'on';
+                }
+            }
+            addLog('All relays turned on');
+        });
+        
+        // Turn off all relays
+        allOffBtn.addEventListener('click', async () => {
+            for (let i = 0; i < 8; i++) {
+                await sendRelayCommand(RELAY_OFF_VALUES[i]);
+                const btn = document.querySelector(`button[data-relay-num="${i}"]`);
+                if (btn) {
+                    btn.textContent = `Relay ${i+1} (Off)`;
+                    btn.className = 'relay-btn relay-off';
+                    btn.dataset.state = 'off';
+                }
+            }
+            addLog('All relays turned off');
+        });
+        
+        // On page load
+        addLog('Application started');
+        createRelayButtons();
+    </script>
+</body>
+</html>
